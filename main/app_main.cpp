@@ -29,6 +29,11 @@
 #include <common_macros.h>
 
 #include "valve_delegate.h"
+#include "pins.h"
+
+extern "C" {
+#include "as5600.h"
+}
 
 static const char *TAG = "app_main";
 
@@ -38,7 +43,35 @@ using namespace esp_matter::endpoint;
 using namespace chip::app::Clusters;
 
 // ---------------------------------------------------------------------------
-// Hardware -- LED strip init (WS2812 on GPIO8)
+// AS5600 sensor read task
+// ---------------------------------------------------------------------------
+
+static void as5600_task(void *arg)
+{
+    as5600_config_t cfg = {
+        .i2c_port = 0,
+        .sda_gpio = PIN_I2C_SDA,
+        .scl_gpio = PIN_I2C_SCL,
+        .clk_hz   = 100000,
+    };
+
+    if (as5600_init(&cfg) != ESP_OK) {
+        ESP_LOGE("as5600_task", "Sensor init failed, task exiting");
+        vTaskDelete(nullptr);
+        return;
+    }
+
+    while (true) {
+        float degrees;
+        if (as5600_read_degrees(&degrees) == ESP_OK) {
+            ESP_LOGI("as5600_task", "\033[1;37mAngle: %.1f deg\033[0m", degrees);
+        }
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Hardware -- LED strip init
 // ---------------------------------------------------------------------------
 
 static led_strip_handle_t s_led_strip = nullptr;
@@ -46,7 +79,7 @@ static led_strip_handle_t s_led_strip = nullptr;
 static void led_strip_init()
 {
     led_strip_config_t cfg = {
-        .strip_gpio_num   = 8,
+        .strip_gpio_num   = PIN_LED_RGB,
         .max_leds         = 1,
         .led_model        = LED_MODEL_WS2812,
         .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB,
@@ -168,6 +201,7 @@ extern "C" void app_main()
 {
     nvs_flash_init();
     led_strip_init();
+    xTaskCreate(as5600_task, "as5600", 4096, nullptr, 4, nullptr);
 
     esp_err_t err = factory_reset_button_register();
     ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to init reset button: %d", err));
